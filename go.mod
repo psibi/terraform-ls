@@ -18,8 +18,8 @@ require (
 	github.com/hashicorp/hcl/v2 v2.12.0
 	github.com/hashicorp/terraform-exec v0.16.1
 	github.com/hashicorp/terraform-json v0.13.0
-	github.com/hashicorp/terraform-registry-address v0.0.0-20220422093245-eb7bcc2ff473
-	github.com/hashicorp/terraform-schema v0.0.0-20220509053855-1e3acbcfd531
+	github.com/hashicorp/terraform-registry-address v0.0.0-20220513081322-494923abb146
+	github.com/hashicorp/terraform-schema v0.0.0-20220513081417-19de8d9dbf7e
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mh-cbon/go-fmt-fail v0.0.0-20160815164508-67765b3fbcb5
 	github.com/mitchellh/cli v1.1.3

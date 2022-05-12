@@ -151,7 +151,8 @@ resource "aws_vpc" "example" {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ps, err := ss.ProviderSchemas.ProviderSchema(modPath, tfaddr.NewDefaultProvider("aws"), vc)
+	ps, err := ss.ProviderSchemas.ProviderSchema(modPath,
+		tfaddr.NewProvider(tfaddr.DefaultProviderRegistryHost, "hashicorp", "aws"), vc)
 	if err != nil {
 		t.Fatal(err)
 	}
