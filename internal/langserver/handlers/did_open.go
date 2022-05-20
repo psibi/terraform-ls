@@ -172,6 +172,19 @@ func (svc *service) decodeModule(ctx context.Context, modHandle document.DirHand
 			}
 			ids = append(ids, id)
 
+			id, err = svc.stateStore.JobStore.EnqueueJob(job.Job{
+				Dir: modHandle,
+				Func: func(ctx context.Context) error {
+					svc.logger.Printf("Running OpTypeGetModuleMetadataFromRegistry")
+					return module.GetModuleMetadataFromRegistry(svc.srvCtx, svc.modStore, svc.schemaStore, modHandle.Path(), svc.logger)
+				},
+				Type: op.OpTypeGetModuleMetadataFromRegistry.String(),
+			})
+			if err != nil {
+				return
+			}
+			ids = append(ids, id)
+
 			return
 		},
 	})

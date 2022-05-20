@@ -2,7 +2,13 @@ package module
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	// "encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hcl-lang/lang"
@@ -226,6 +232,68 @@ func ParseModuleManifest(fs ReadOnlyFS, modStore *state.ModuleStore, modPath str
 	return err
 }
 
+func GetModuleMetadataFromRegistry(ctx context.Context, modStore *state.ModuleStore, schema *state.ProviderSchemaStore, modPath string, logger *log.Logger) error {
+	// TODO: loop over module calls
+	logger.Printf("OpTypeGetModuleMetadataFromRegistry Getting module calls for %v", modPath)
+	calls, err := modStore.ModuleCalls(modPath)
+	if err != nil {
+		logger.Printf("Err Modulecalls: %v", err)
+		return nil
+	}
+
+	logger.Printf("OpTypeGetModuleMetadataFromRegistry Found %v module calls installed for", len(calls.Installed))
+	logger.Printf("OpTypeGetModuleMetadataFromRegistry Found %v module calls decalred for", len(calls.Declared))
+
+	var providers []tfaddr.Provider
+	for _, c := range calls.Installed {
+		logger.Printf("SourceAddr: %v::%v::%v::%v", c.SourceAddr, c.LocalName, c.Path, c.Version)
+		p, err := tfaddr.ParseRawProviderSourceString(c.SourceAddr)
+		if err != nil {
+			logger.Printf("Err SourceAddr: %v", err)
+			continue
+		}
+
+		providers = append(providers, p)
+	}
+
+	for _, c := range calls.Declared {
+		logger.Printf("SourceAddr: %v::%v::%v::%v", c.SourceAddr, c.LocalName, c.LocalName, c.Version)
+		p, err := tfaddr.ParseRawProviderSourceString(c.SourceAddr)
+		if err != nil {
+			logger.Printf("Err SourceAddr: %v", err)
+			continue
+		}
+
+		providers = append(providers, p)
+	}
+
+	for _, provider := range providers {
+		logger.Printf("Provider: %v::%v::%v FQDN:%v", provider.Namespace, provider.Type, provider.Hostname, provider.String())
+		logger.Printf("Provider: %v", provider.ForDisplay())
+
+		// TODO: check if that address was already cached. if cached, return
+
+		// get module data from tfregistry
+		url := fmt.Sprintf("https://registry.terraform.io/v1/modules/%s", provider.String())
+		logger.Printf("Provider: %v", url)
+		resp, err := http.Get(url)
+		if err != nil {
+			continue
+		}
+
+		var response TerraformRegistryModule
+		err = json.NewDecoder(resp.Body).Decode(&response)
+		if err != nil {
+			continue
+		}
+		logger.Printf("Provider: %v", response.Root.Inputs)
+
+		// TODO: if not, cache it
+	}
+
+	return nil
+}
+
 func LoadModuleMetadata(modStore *state.ModuleStore, modPath string) error {
 	err := modStore.SetMetaState(modPath, op.OpStateLoading)
 	if err != nil {
@@ -347,4 +415,104 @@ func DecodeVarsReferences(ctx context.Context, modStore *state.ModuleStore, sche
 	}
 
 	return rErr
+}
+
+type TerraformRegistryModule struct {
+	ID              string    `json:"id"`
+	Owner           string    `json:"owner"`
+	Namespace       string    `json:"namespace"`
+	Name            string    `json:"name"`
+	Version         string    `json:"version"`
+	Provider        string    `json:"provider"`
+	ProviderLogoURL string    `json:"provider_logo_url"`
+	Description     string    `json:"description"`
+	Source          string    `json:"source"`
+	Tag             string    `json:"tag"`
+	PublishedAt     time.Time `json:"published_at"`
+	Downloads       int       `json:"downloads"`
+	Verified        bool      `json:"verified"`
+	Root            struct {
+		Path   string `json:"path"`
+		Name   string `json:"name"`
+		Readme string `json:"readme"`
+		Empty  bool   `json:"empty"`
+		Inputs []struct {
+			Name        string `json:"name"`
+			Type        string `json:"type"`
+			Description string `json:"description"`
+			Default     string `json:"default"`
+			Required    bool   `json:"required"`
+		} `json:"inputs"`
+		Outputs []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"outputs"`
+		Dependencies         []interface{} `json:"dependencies"`
+		ProviderDependencies []struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+			Source    string `json:"source"`
+			Version   string `json:"version"`
+		} `json:"provider_dependencies"`
+		Resources []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"resources"`
+	} `json:"root"`
+	Submodules []struct {
+		Path   string `json:"path"`
+		Name   string `json:"name"`
+		Readme string `json:"readme"`
+		Empty  bool   `json:"empty"`
+		Inputs []struct {
+			Name        string `json:"name"`
+			Type        string `json:"type"`
+			Description string `json:"description"`
+			Default     string `json:"default"`
+			Required    bool   `json:"required"`
+		} `json:"inputs"`
+		Outputs []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"outputs"`
+		Dependencies         []interface{} `json:"dependencies"`
+		ProviderDependencies []struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+			Source    string `json:"source"`
+			Version   string `json:"version"`
+		} `json:"provider_dependencies"`
+		Resources []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"resources"`
+	} `json:"submodules"`
+	Examples []struct {
+		Path    string        `json:"path"`
+		Name    string        `json:"name"`
+		Readme  string        `json:"readme"`
+		Empty   bool          `json:"empty"`
+		Inputs  []interface{} `json:"inputs"`
+		Outputs []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"outputs"`
+		Dependencies []struct {
+			Name    string `json:"name"`
+			Source  string `json:"source"`
+			Version string `json:"version"`
+		} `json:"dependencies"`
+		ProviderDependencies []struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+			Source    string `json:"source"`
+			Version   string `json:"version"`
+		} `json:"provider_dependencies"`
+		Resources []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"resources"`
+	} `json:"examples"`
+	Providers []string `json:"providers"`
+	Versions  []string `json:"versions"`
 }
