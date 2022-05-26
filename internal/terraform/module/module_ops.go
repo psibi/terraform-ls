@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/hcl-lang/lang"
 	"github.com/hashicorp/terraform-ls/internal/decoder"
 	ilsp "github.com/hashicorp/terraform-ls/internal/lsp"
+	"github.com/hashicorp/terraform-ls/internal/registry"
 	"github.com/hashicorp/terraform-ls/internal/state"
 	"github.com/hashicorp/terraform-ls/internal/terraform/datadir"
 	op "github.com/hashicorp/terraform-ls/internal/terraform/module/operation"
@@ -232,7 +233,7 @@ func ParseModuleManifest(fs ReadOnlyFS, modStore *state.ModuleStore, modPath str
 	return err
 }
 
-func GetModuleMetadataFromRegistry(ctx context.Context, modStore *state.ModuleStore, schema *state.ProviderSchemaStore, modPath string, logger *log.Logger) error {
+func GetModuleMetadataFromRegistry(ctx context.Context, modStore *state.ModuleStore, modMetaStore *state.RegistryModuleMetadataStore, modPath string, logger *log.Logger) error {
 	// TODO: loop over module calls
 	logger.Printf("OpTypeGetModuleMetadataFromRegistry Getting module calls for %v", modPath)
 	calls, err := modStore.ModuleCalls(modPath)
@@ -244,39 +245,64 @@ func GetModuleMetadataFromRegistry(ctx context.Context, modStore *state.ModuleSt
 	logger.Printf("OpTypeGetModuleMetadataFromRegistry Found %v module calls installed for", len(calls.Installed))
 	logger.Printf("OpTypeGetModuleMetadataFromRegistry Found %v module calls decalred for", len(calls.Declared))
 
-	var providers []tfaddr.Provider
-	for _, c := range calls.Installed {
-		logger.Printf("SourceAddr: %v::%v::%v::%v", c.SourceAddr, c.LocalName, c.Path, c.Version)
-		p, err := tfaddr.ParseRawProviderSourceString(c.SourceAddr)
-		if err != nil {
-			logger.Printf("Err SourceAddr: %v", err)
-			continue
-		}
-
-		providers = append(providers, p)
-	}
-
 	for _, c := range calls.Declared {
 		logger.Printf("SourceAddr: %v::%v::%v::%v", c.SourceAddr, c.LocalName, c.LocalName, c.Version)
-		p, err := tfaddr.ParseRawProviderSourceString(c.SourceAddr)
+		p, err := tfaddr.ParseRawModuleSourceRegistry(c.SourceAddr)
 		if err != nil {
 			logger.Printf("Err SourceAddr: %v", err)
 			continue
 		}
 
-		providers = append(providers, p)
-	}
+		logger.Printf("Provider: %v", p.ForDisplay())
 
-	for _, provider := range providers {
-		logger.Printf("Provider: %v::%v::%v FQDN:%v", provider.Namespace, provider.Type, provider.Hostname, provider.String())
-		logger.Printf("Provider: %v", provider.ForDisplay())
-
-		// TODO: check if that address was already cached. if cached, return
+		// check if that address was already cached
+		exists, err := modMetaStore.Exists(p, c.Version)
+		if err != nil {
+			// error finding in cache, so cache again
+			continue
+		}
+		if exists {
+			// entry in cache, no need to look up
+			continue
+		}
 
 		// get module data from tfregistry
-		url := fmt.Sprintf("https://registry.terraform.io/v1/modules/%s", provider.String())
+		// modify this to first call https://github.com/hashicorp/terraform-registry/blob/main/docs/api/v1/modules.md#list-module-versions
+		// to find version that matches constraint up above
+		// then pull info
+
+		// https://registry.terraform.io/v1/modules/terraform-aws-modules/vpc/aws/versions
+		url := fmt.Sprintf("https://registry.terraform.io/v1/modules/%s/%s/%s/versions",
+			p.PackageAddr.Namespace, p.PackageAddr.Name, p.PackageAddr.TargetSystem,
+		)
 		logger.Printf("Provider: %v", url)
 		resp, err := http.Get(url)
+		if err != nil {
+			continue
+		}
+		var things TerraformRegistryModuleVersions
+		err = json.NewDecoder(resp.Body).Decode(&things)
+		if err != nil {
+			continue
+		}
+
+		var found *version.Version
+		for _, v := range things.Modules {
+			for _, t := range v.Versions {
+
+				g, _ := version.NewVersion(t.Version)
+
+				if c.Version.Check(g) {
+					found = g
+					break
+				}
+			}
+		}
+
+		// get info on specific module
+		url = fmt.Sprintf("https://registry.terraform.io/v1/modules/%s/%s", p.String(), found.String())
+		logger.Printf("Provider: %v", url)
+		resp, err = http.Get(url)
 		if err != nil {
 			continue
 		}
@@ -286,9 +312,16 @@ func GetModuleMetadataFromRegistry(ctx context.Context, modStore *state.ModuleSt
 		if err != nil {
 			continue
 		}
-		logger.Printf("Provider: %v", response.Root.Inputs)
+		logger.Printf("Provider Inputs: %v", response.Root.Inputs)
+		logger.Printf("Provider Outputs: %v", response.Root.Outputs)
 
 		// TODO: if not, cache it
+		// key :  sourceaddress & version
+		err = modMetaStore.Cache(p, version.Must(version.NewVersion(response.Version)), response.Root.Inputs, response.Root.Outputs)
+		if err != nil {
+			// error caching result should not stop operations
+			continue
+		}
 	}
 
 	return nil
@@ -432,22 +465,13 @@ type TerraformRegistryModule struct {
 	Downloads       int       `json:"downloads"`
 	Verified        bool      `json:"verified"`
 	Root            struct {
-		Path   string `json:"path"`
-		Name   string `json:"name"`
-		Readme string `json:"readme"`
-		Empty  bool   `json:"empty"`
-		Inputs []struct {
-			Name        string `json:"name"`
-			Type        string `json:"type"`
-			Description string `json:"description"`
-			Default     string `json:"default"`
-			Required    bool   `json:"required"`
-		} `json:"inputs"`
-		Outputs []struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-		} `json:"outputs"`
-		Dependencies         []interface{} `json:"dependencies"`
+		Path                 string            `json:"path"`
+		Name                 string            `json:"name"`
+		Readme               string            `json:"readme"`
+		Empty                bool              `json:"empty"`
+		Inputs               []registry.Input  `json:"inputs"`
+		Outputs              []registry.Output `json:"outputs"`
+		Dependencies         []interface{}     `json:"dependencies"`
 		ProviderDependencies []struct {
 			Name      string `json:"name"`
 			Namespace string `json:"namespace"`
@@ -459,60 +483,23 @@ type TerraformRegistryModule struct {
 			Type string `json:"type"`
 		} `json:"resources"`
 	} `json:"root"`
-	Submodules []struct {
-		Path   string `json:"path"`
-		Name   string `json:"name"`
-		Readme string `json:"readme"`
-		Empty  bool   `json:"empty"`
-		Inputs []struct {
-			Name        string `json:"name"`
-			Type        string `json:"type"`
-			Description string `json:"description"`
-			Default     string `json:"default"`
-			Required    bool   `json:"required"`
-		} `json:"inputs"`
-		Outputs []struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-		} `json:"outputs"`
-		Dependencies         []interface{} `json:"dependencies"`
-		ProviderDependencies []struct {
-			Name      string `json:"name"`
-			Namespace string `json:"namespace"`
-			Source    string `json:"source"`
-			Version   string `json:"version"`
-		} `json:"provider_dependencies"`
-		Resources []struct {
-			Name string `json:"name"`
-			Type string `json:"type"`
-		} `json:"resources"`
-	} `json:"submodules"`
-	Examples []struct {
-		Path    string        `json:"path"`
-		Name    string        `json:"name"`
-		Readme  string        `json:"readme"`
-		Empty   bool          `json:"empty"`
-		Inputs  []interface{} `json:"inputs"`
-		Outputs []struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-		} `json:"outputs"`
-		Dependencies []struct {
-			Name    string `json:"name"`
-			Source  string `json:"source"`
+}
+
+type TerraformRegistryModuleVersions struct {
+	Modules []struct {
+		Source   string `json:"source"`
+		Versions []struct {
 			Version string `json:"version"`
-		} `json:"dependencies"`
-		ProviderDependencies []struct {
-			Name      string `json:"name"`
-			Namespace string `json:"namespace"`
-			Source    string `json:"source"`
-			Version   string `json:"version"`
-		} `json:"provider_dependencies"`
-		Resources []struct {
-			Name string `json:"name"`
-			Type string `json:"type"`
-		} `json:"resources"`
-	} `json:"examples"`
-	Providers []string `json:"providers"`
-	Versions  []string `json:"versions"`
+			Root    struct {
+				Providers []struct {
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+					Source    string `json:"source"`
+					Version   string `json:"version"`
+				} `json:"providers"`
+				Dependencies []interface{} `json:"dependencies"`
+			} `json:"root"`
+			Submodules []interface{} `json:"submodules"`
+		} `json:"versions"`
+	} `json:"modules"`
 }

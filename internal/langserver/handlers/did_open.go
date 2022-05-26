@@ -176,7 +176,7 @@ func (svc *service) decodeModule(ctx context.Context, modHandle document.DirHand
 				Dir: modHandle,
 				Func: func(ctx context.Context) error {
 					svc.logger.Printf("Running OpTypeGetModuleMetadataFromRegistry")
-					return module.GetModuleMetadataFromRegistry(svc.srvCtx, svc.modStore, svc.schemaStore, modHandle.Path(), svc.logger)
+					return module.GetModuleMetadataFromRegistry(svc.srvCtx, svc.modStore, svc.regMetadataStore, modHandle.Path(), svc.logger)
 				},
 				Type: op.OpTypeGetModuleMetadataFromRegistry.String(),
 			})

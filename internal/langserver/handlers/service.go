@@ -45,19 +45,20 @@ type service struct {
 	closedDirWalker *module.Walker
 	openDirWalker   *module.Walker
 
-	fs            *filesystem.Filesystem
-	modStore      *state.ModuleStore
-	schemaStore   *state.ProviderSchemaStore
-	watcher       module.Watcher
-	newWatcher    module.WatcherFactory
-	tfDiscoFunc   discovery.DiscoveryFunc
-	tfExecFactory exec.ExecutorFactory
-	tfExecOpts    *exec.ExecutorOpts
-	telemetry     telemetry.Sender
-	decoder       *decoder.Decoder
-	stateStore    *state.StateStore
-	server        session.Server
-	diagsNotifier *diagnostics.Notifier
+	fs               *filesystem.Filesystem
+	modStore         *state.ModuleStore
+	schemaStore      *state.ProviderSchemaStore
+	regMetadataStore *state.RegistryModuleMetadataStore
+	watcher          module.Watcher
+	newWatcher       module.WatcherFactory
+	tfDiscoFunc      discovery.DiscoveryFunc
+	tfExecFactory    exec.ExecutorFactory
+	tfExecOpts       *exec.ExecutorOpts
+	telemetry        telemetry.Sender
+	decoder          *decoder.Decoder
+	stateStore       *state.StateStore
+	server           session.Server
+	diagsNotifier    *diagnostics.Notifier
 
 	walkerCollector    *module.WalkerCollector
 	additionalHandlers map[string]rpch.Func
